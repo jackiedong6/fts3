@@ -274,6 +274,76 @@ std::list<fts3::events::MessageUpdater> MySqlAPI::getActiveInHost(const std::str
     }
 }
 
+std::map<std::string, long long> MySqlAPI::getSubmittedCountInActivity(std::string src, std::string dst, std::string vo)
+{
+    soci::session sql(*connectionPool);
+
+    try
+    {
+        std::string vo_exists;
+        soci::indicator isNull = soci::i_ok;
+
+        sql << "SELECT vo FROM t_activity_share_config where vo=:vo", soci::use(vo), soci::into(vo_exists, isNull);
+        if(isNull == soci::i_null)
+            return ret;
+
+
+        soci::rowset<soci::row> rs = (
+                                         sql.prepare <<
+                                         " SELECT activity, COUNT(DISTINCT f.job_id, f.file_index) AS count "
+                                         " FROM t_file f USE INDEX(idx_link_state_vo) INNER JOIN t_job j ON (f.job_id = j.job_id) WHERE "
+                                         "  j.vo_name = f.vo_name AND f.file_state = 'ACTIVE' AND "
+                                         "  f.source_se = :source AND f.dest_se = :dest AND "
+                                         "  f.vo_name = :vo_name AND j.vo_name = f.vo_name AND "
+                                         "  (f.hashed_id >= :hStart AND f.hashed_id <= :hEnd) AND "
+                                         "  (j.job_type = 'N' OR j.job_type = 'R' OR j.job_type IS NULL) "
+                                         " GROUP BY activity ORDER BY NULL ",
+                                         soci::use(src),
+                                         soci::use(dst),
+                                         soci::use(vo),
+                                         soci::use(hashSegment.start),
+                                         soci::use(hashSegment.end)
+                                     );
+
+        ret.clear();
+
+        soci::rowset<soci::row>::const_iterator it;
+        for (it = rs.begin(); it != rs.end(); it++)
+        {
+            std::string activity_name;
+
+            if (it->get_indicator("activity") == soci::i_null) {
+                activity_name = "default";
+            }
+            else {
+                activity_name = it->get<std::string>("activity");
+                if (activity_name.empty()) {
+                    activity_name = "default";
+                }
+            }
+
+            boost::algorithm::to_lower(activity_name);
+            long long nFiles = it->get<long long>("count");
+            ret[activity_name] = nFiles;
+        }
+    }
+    catch (std::exception& e)
+    {
+        throw UserError(std::string(__func__) + ": Caught exception " + e.what());
+    }
+    catch (...)
+    {
+        throw UserError(std::string(__func__) + ": Caught exception " );
+    }
+
+    return ret;
+}
+
+std::map<std::string, long long> MySqlAPI::getActiveCountInActivity(std::string src, std::string dst, std::string vo)
+{
+    soci::session sql(*connectionPool);
+    return getActivitiesInQueue(sql, src, dst, vo);
+}
 
 std::map<std::string, long long> MySqlAPI::getActivitiesInQueue(soci::session& sql, std::string src, std::string dst, std::string vo)
 {
@@ -566,9 +636,35 @@ static int getActiveCount(soci::session& sql, const std::string &source, const s
     return activeCount;
 }
 
+/// Count how many transfers are running for each (src, dest, vo, activity) queue.
+/// @param source Source storage
+/// @param dest Destination storage
+/// @param vo VO name
+/// @param activity Activity name
+/// @return Number of running (or scheduled) transfers
+static int getActiveCountForQueue(
+    const std::string &source,
+    const std::string &dest,
+    const std::string &vo,
+    const std::string &activity)
+{
+    soci::session sql(*connectionPool);
+    int activeCount = 0;
+
+    //Running Transefers (R+N+Y+H job type)
+    sql << "SELECT COUNT(*) FROM t_file f JOIN t_job j ON j.job_id = f.job_id "
+        " WHERE f.source_se = :source_se AND f.dest_se = :dest_se AND f.vo_name = :vo_name AND f.activity = :activity"
+        " AND f.file_state = 'ACTIVE'",
+        soci::use(source), soci::use(dest), soci::use(vo), soci::use(activity),
+        soci::into(activeCount);
+
+    return activeCount;
+}
+
 
 void MySqlAPI::getReadyTransfers(const std::vector<QueueId>& queues,
-        std::map<std::string, std::list<TransferFile> >& files)
+        std::map<std::string, std::list<TransferFile> >& files,
+        std::map<Pair, int> &slotsPerLink)
 {
     soci::session sql(*connectionPool);
     time_t now = time(NULL);
@@ -586,19 +682,27 @@ void MySqlAPI::getReadyTransfers(const std::vector<QueueId>& queues,
             int activeCount = getActiveCount(sql, it->sourceSe, it->destSe);
 
             // How many can we run
-            sql << "SELECT active FROM t_optimizer WHERE source_se = :source_se AND dest_se = :dest_se",
-                   soci::use(it->sourceSe),
-                   soci::use(it->destSe),
-                   soci::into(maxActive, maxActiveNull);
-
+            // sql << "SELECT active FROM t_optimizer WHERE source_se = :source_se AND dest_se = :dest_se",
+            //        soci::use(it->sourceSe),
+            //        soci::use(it->destSe),
+            //        soci::into(maxActive, maxActiveNull);
+            
             // Calculate how many tops we should pick
-            if (maxActiveNull != soci::i_null && maxActive > 0)
-            {
-                filesNum = (maxActive - activeCount);
-                if(filesNum <= 0 ) {
-                    continue;
-                }
+            // if (maxActiveNull != soci::i_null && maxActive > 0)
+            // {
+            //     filesNum = (maxActive - activeCount);
+            //     if(filesNum <= 0 ) {
+            //         continue;
+            //     }
+            // }
+
+            // How many can we run
+            Pair pair(it->sourceSe, it->destSe);
+            if (slotsPerLink.find(pair) == 0 || slotsPerLink[pair] == 0) {
+                // Pair does not exist in slotsPerLink
+                continue;
             }
+            filesNum = slotsPerLink[pair];
 
             int fixedPriority =  ServerConfig::instance().get<int> ("UseFixedJobPriority");
             soci::indicator isMaxPriorityNull = soci::i_ok;
