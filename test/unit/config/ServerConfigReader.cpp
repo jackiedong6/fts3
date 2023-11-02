@@ -45,6 +45,17 @@ BOOST_FIXTURE_TEST_CASE (functionOperator, fts3::config::ServerConfigReader)
     BOOST_CHECK_EQUAL(_vars["SiteName"], std::string("required"));
 }
 
+BOOST_FIXTURE_TEST_CASE (transferOperator, fts3::config::ServerConfigReader)
+{
+    std::vector<const char*> args{
+            "executable", "--configfile=/dev/null",
+            "--TransferServiceAllocator=MAXFLOW", "--TransferServiceScheduler=DEFICIT"
+    };
+
+    (*this)(args.size(), (char**)args.data());
+    BOOST_CHECK_EQUAL(_vars["TransferServiceAllocator"], std::string("MAXFLOW"));
+    BOOST_CHECK_EQUAL(_vars["TransferServiceScheduler"], std::string("DEFICIT"));
+}
 
 // Test class for DbType options.
 struct TestDbTypeServerConfigReader : public fts3::config::ServerConfigReader
@@ -97,6 +108,9 @@ BOOST_FIXTURE_TEST_CASE (functionOperatorFromFile, fts3::config::ServerConfigRea
     file << "DbUserName=" << f_str << std::endl;
     file << "DbPassword=" << f_str << std::endl;
     file << "TransferLogDirectory=" << f_str << std::endl;
+    file << "ThreadNum=" << f_intval << std::endl;
+    file << "TransferServiceSchedulingAlgorithm=" << f_intval << std::endl;
+    file << "TransferServiceAllocatorAlgorithm=" << f_intval << std::endl;
     file << "ThreadNum=" << f_intval << std::endl;
     file.close();
 
