@@ -17,9 +17,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <event2/event2.h>
 
 #include "Server.h"
-
 #include "common/Logger.h"
 #include "config/ServerConfig.h"
 #include "services/cleaner/CleanerService.h"
@@ -31,7 +31,6 @@
 #include "services/optimizer/OptimizerService.h"
 #include "services/transfers/MessageProcessingService.h"
 #include "services/transfers/SupervisorService.h"
-
 
 namespace fts3 {
 namespace server {

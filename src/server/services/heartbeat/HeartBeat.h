@@ -38,7 +38,6 @@ class HeartBeat: public BaseService
 public:
     HeartBeat();
     virtual void runService();
-
     bool isLeadNode(bool bypassDraining = false);
 
 private:
@@ -46,6 +45,8 @@ private:
 
     bool criticalThreadExpired(time_t retrieveRecords, time_t updateRecords,
             time_t stallRecords);
+
+    static void heartBeatCallback(evutil_socket_t fd, short event, void* arg);
 
     void orderedShutdown();
 };

@@ -37,6 +37,7 @@
 #include <msg-bus/producer.h>
 
 #include <ctime>
+#include <event2/event.h>
 
 using namespace fts3::common;
 
@@ -66,40 +67,47 @@ TransfersService::~TransfersService()
 {
 }
 
+static void callback(evutil_socket_t fd, short event, void *arg) {
+    // TODO: Read from RPC or read from FD
+    try
+    {
+        boost::this_thread::sleep(schedulingInterval);
+
+        if (DrainMode::instance())
+        {
+            FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Set to drain mode, no more transfers for this instance!" << commit;
+            boost::this_thread::sleep(boost::posix_time::seconds(15));
+            continue;
+        }
+
+        executeUrlcopy();
+    }
+    catch (boost::thread_interrupted&)
+    {
+        FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Thread interruption requested" << commit;
+        break;
+    }
+    catch (std::exception& e)
+    {
+        FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Exception in TransfersService " << e.what() << commit;
+    }
+    catch (...)
+    {
+        FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Exception in TransfersService!" << commit;
+    }
+}
 
 void TransfersService::runService()
 {
-    while (!boost::this_thread::interruption_requested())
-    {
-        retrieveRecords = time(0);
+    retrieveRecords = time(0);
+    struct event* transfersServiceEvent;
+    int fd;
+    // TODO: Initialize fd / integrate rpc reading
+    transfersServiceEvent = event_new(baseEvent, fd1, EV_READ | EV_PERSIST, callback, NULL);
+    event_add(transfersServiceEvent, NULL);
+    event_base_dispatch(baseEvent);
 
-        try
-        {
-            boost::this_thread::sleep(schedulingInterval);
-
-            if (DrainMode::instance())
-            {
-                FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Set to drain mode, no more transfers for this instance!" << commit;
-                boost::this_thread::sleep(boost::posix_time::seconds(15));
-                continue;
-            }
-
-            executeUrlcopy();
-        }
-        catch (boost::thread_interrupted&)
-        {
-            FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Thread interruption requested" << commit;
-            break;
-        }
-        catch (std::exception& e)
-        {
-            FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Exception in TransfersService " << e.what() << commit;
-        }
-        catch (...)
-        {
-            FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Exception in TransfersService!" << commit;
-        }
-    }
+    event_free(transfersServiceEvent);
 }
 
 

@@ -21,7 +21,8 @@
 #include <boost/noncopyable.hpp>
 #include <boost/thread.hpp>
 #include "common/Logger.h"
-
+#include <event2/event.h>
+#include <event2/event_struct.h>
 
 namespace fts3 {
 namespace server {
@@ -31,10 +32,14 @@ namespace server {
 class BaseService: public boost::noncopyable {
 private:
     std::string serviceName;
-
+    struct event_base* baseEvent;
 protected:
     BaseService(const std::string &serviceName): serviceName(serviceName)
     {
+        baseEvent = baseEvent = event_base_new();
+        if (!baseEvent) {
+            throw SystemError(std::string(__func__) + ": Unable to create event base for" + serviceName;
+        }
     }
 
     void setServiceName(const std::string &newServiceName)
@@ -44,6 +49,9 @@ protected:
 
 public:
     virtual ~BaseService() {
+        if (baseEvent) {
+            event_base_free(baseEvent);
+        }
         FTS3_COMMON_LOGGER_NEWLOG(TRACE)  << getServiceName()  << " destroyed" << fts3::common::commit;
     };
 
