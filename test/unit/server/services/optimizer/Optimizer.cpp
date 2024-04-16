@@ -110,7 +110,9 @@ protected:
     }
 
 public:
-    BaseOptimizerFixture(): Optimizer(this, NULL) {
+    BaseOptimizerFixture():
+        Optimizer(this, NULL, Pair("mock://dpm.cern.ch", "mock://dcache.desy.de"), {}) {
+        // Initialize with a default Pair object or another appropriate one.
         mockOptimizerMode = kOptimizerDisabled;
     }
 

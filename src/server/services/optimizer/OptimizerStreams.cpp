@@ -20,6 +20,7 @@
 
 #include "Optimizer.h"
 #include "OptimizerConstants.h"
+#include "Optimizer.h"
 #include "common/Exceptions.h"
 #include "common/Logger.h"
 

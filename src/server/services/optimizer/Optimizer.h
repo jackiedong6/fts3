@@ -25,6 +25,7 @@
 #include <map>
 #include <string>
 
+#include <boost/any.hpp>
 #include <boost/noncopyable.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/timer/timer.hpp>
@@ -137,6 +138,7 @@ protected:
     std::map<Pair, PairState> inMemoryStore;
     OptimizerDataSource *dataSource;
     OptimizerCallbacks *callbacks;
+    Pair pair;
     boost::posix_time::time_duration optimizerSteadyInterval;
     int maxNumberOfStreams;
     int maxSuccessRate;
@@ -162,7 +164,7 @@ protected:
         int diff, const std::string &rationale, boost::timer::cpu_times elapsed);
 
 public:
-    Optimizer(OptimizerDataSource *ds, OptimizerCallbacks *callbacks);
+    Optimizer(OptimizerDataSource *ds, OptimizerCallbacks *callbacks, const Pair& optimizerPair, std::map<Pair, PairState> inMemoryStore);
     ~Optimizer();
 
     void setSteadyInterval(boost::posix_time::time_duration);
@@ -172,7 +174,7 @@ public:
     void setBaseSuccessRate(int);
     void setStepSize(int increase, int increaseAggressive, int decrease);
     void setEmaAlpha(double);
-    void run(void);
+    virtual void run(boost::any &);
     void runOptimizerForPair(const Pair&);
 };
 

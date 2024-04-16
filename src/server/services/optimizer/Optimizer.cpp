@@ -31,8 +31,8 @@ namespace fts3 {
 namespace optimizer {
 
 
-Optimizer::Optimizer(OptimizerDataSource *ds, OptimizerCallbacks *callbacks):
-    dataSource(ds), callbacks(callbacks),
+Optimizer::Optimizer(OptimizerDataSource *ds, OptimizerCallbacks *callbacks, const Pair& optimizerPair, std::map<Pair, PairState> inMemoryStore):
+    dataSource(ds), callbacks(callbacks), pair(optimizerPair), inMemoryStore(inMemoryStore),
     optimizerSteadyInterval(boost::posix_time::seconds(60)), maxNumberOfStreams(10),
     maxSuccessRate(100), lowSuccessRate(97), baseSuccessRate(96),
     decreaseStepSize(1), increaseStepSize(1), increaseAggressiveStepSize(2),
@@ -90,24 +90,28 @@ void Optimizer::setEmaAlpha(double alpha)
 }
 
 
-void Optimizer::run(void)
+void Optimizer::run(boost::any & ctx)
 {
     FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Optimizer run" << commit;
-    try {
-        std::list<Pair> pairs = dataSource->getActivePairs();
-        // Make sure the order is always the same
-        // See FTS-1094
-        pairs.sort();
 
-        for (auto i = pairs.begin(); i != pairs.end(); ++i) {
-            runOptimizerForPair(*i);
-        }
+    if (ctx.empty()) {
+        ctx = 0;
+    }
+    int &numPairs = boost::any_cast<int &>(ctx);
+
+
+    if (boost::this_thread::interruption_requested()) {
+        return;
+    }
+    try {
+        runOptimizerForPair(pair);
+        numPairs += 1;
     }
     catch (std::exception &e) {
-        throw SystemError(std::string(__func__) + ": Caught exception " + e.what());
+        FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Process thread exception " << e.what() << commit;
     }
     catch (...) {
-        throw SystemError(std::string(__func__) + ": Caught exception ");
+        FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Process thread exception unknown" << commit;
     }
 }
 

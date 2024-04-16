@@ -24,15 +24,18 @@
 
 #include "../BaseService.h"
 #include "../heartbeat/HeartBeat.h"
+#include <db/generic/Pair.h>
+#include "Optimizer.h"
 
 namespace fts3 {
 namespace server {
-
+using optimizer::PairState;
 
 class OptimizerService: public BaseService
 {
 protected:
     HeartBeat *beat;
+    std::map<Pair, PairState> inMemoryStore;
 
 public:
     OptimizerService(HeartBeat *beat);

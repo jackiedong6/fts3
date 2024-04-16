@@ -23,16 +23,18 @@
 #include "OptimizerService.h"
 #include "Optimizer.h"
 
+#include "common/ThreadPool.h"
 #include "db/generic/SingleDbInstance.h"
 
 
+using namespace fts3::common;
 namespace fts3 {
 namespace server {
 
 using optimizer::Optimizer;
 using optimizer::OptimizerCallbacks;
+using optimizer::OptimizerDataSource;
 using optimizer::PairState;
-
 
 class OptimizerNotifier : public OptimizerCallbacks {
 protected:
@@ -97,29 +99,47 @@ void OptimizerService::runService()
     auto increaseStep = config::ServerConfig::instance().get<int>("OptimizerIncreaseStep");
     auto increaseAggressiveStep = config::ServerConfig::instance().get<int>("OptimizerAggressiveIncreaseStep");
     auto decreaseStep = config::ServerConfig::instance().get<int>("OptimizerDecreaseStep");
-
+    auto optimizerPoolSize = config::ServerConfig::instance().get<int>("OptimizerThreadPool");
+    
     OptimizerNotifier optimizerCallbacks(
         config::ServerConfig::instance().get<bool>("MonitoringMessaging"),
         config::ServerConfig::instance().get<std::string>("MessagingDirectory")
     );
-
-    Optimizer optimizer(
-        db::DBSingleton::instance().getDBObjectInstance()->getOptimizerDataSource(),
-        &optimizerCallbacks
-    );
-    optimizer.setSteadyInterval(optimizerSteadyInterval);
-    optimizer.setMaxNumberOfStreams(maxNumberOfStreams);
-    optimizer.setMaxSuccessRate(maxSuccessRate);
-    optimizer.setLowSuccessRate(lowSuccessRate);
-    optimizer.setBaseSuccessRate(baseSuccessRate);
-    optimizer.setEmaAlpha(emaAlpha);
-    optimizer.setStepSize(increaseStep, increaseAggressiveStep, decreaseStep);
-
+    
+    OptimizerDataSource *dataSource = db::DBSingleton::instance().getDBObjectInstance()->getOptimizerDataSource();
+    ThreadPool<Optimizer> optimizerPool(optimizerPoolSize);
+    
     while (!boost::this_thread::interruption_requested()) {
         try {
             if (beat->isLeadNode()) {
-                optimizer.run();
+                std::list<Pair> pairs = dataSource->getActivePairs();
+                int initial_size = pairs.size();
+                // Make sure the order is always the same
+                // See FTS-1094
+                pairs.sort();
+                for (auto i = pairs.begin(); i != pairs.end(); ++i) {
+                    Optimizer *optimizer = new Optimizer(dataSource, &optimizerCallbacks, *i, inMemoryStore);
+                    optimizer->setSteadyInterval(optimizerSteadyInterval);
+                    optimizer->setMaxNumberOfStreams(maxNumberOfStreams);
+                    optimizer->setMaxSuccessRate(maxSuccessRate);
+                    optimizer->setLowSuccessRate(lowSuccessRate);
+                    optimizer->setBaseSuccessRate(baseSuccessRate);
+                    optimizer->setEmaAlpha(emaAlpha);
+                    optimizer->setStepSize(increaseStep, increaseAggressiveStep, decreaseStep);
+                    optimizerPool.start(optimizer);
+                }
+
+                optimizerPool.join();
+                int numPairs = optimizerPool.reduce(std::plus<int>());
+                FTS3_COMMON_LOGGER_NEWLOG(INFO) <<"Optimizerpool processed: " << initial_size
+                << " files (" << numPairs << " have been proceesed)" << commit;
+
             }
+        }
+        catch (const boost::thread_interrupted&) {
+            FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Interruption requested in OptimizerService:runService" << commit;
+            optimizerPool.interrupt();
+            optimizerPool.join();
         }
         catch (std::exception &e) {
             FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Process thread OptimizerService " << e.what() <<
@@ -128,8 +148,10 @@ void OptimizerService::runService()
         catch (...) {
             FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Process thread OptimizerService unknown" << fts3::common::commit;
         }
-        boost::this_thread::sleep(optimizerInterval);
-    }
+            boost::this_thread::sleep(optimizerInterval);
+        }
+        optimizerPool.interrupt();
+        return; 
 }
 
 
