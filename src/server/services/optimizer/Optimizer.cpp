@@ -92,8 +92,7 @@ void Optimizer::setEmaAlpha(double alpha)
 
 void Optimizer::run(boost::any & ctx)
 {
-    FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Optimizer run" << commit;
-
+    FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Optimizer Thread run: pair - " << pair <<  commit;
     if (ctx.empty()) {
         ctx = 0;
     }

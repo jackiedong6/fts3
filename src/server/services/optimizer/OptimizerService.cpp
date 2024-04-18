@@ -25,7 +25,7 @@
 
 #include "common/ThreadPool.h"
 #include "db/generic/SingleDbInstance.h"
-
+#include <chrono> 
 
 using namespace fts3::common;
 namespace fts3 {
@@ -106,19 +106,24 @@ void OptimizerService::runService()
         config::ServerConfig::instance().get<std::string>("MessagingDirectory")
     );
     
+    ThreadPool<Optimizer> optimizerPool(optimizerPoolSize);        
+    auto end = std::chrono::system_clock::now();
     OptimizerDataSource *dataSource = db::DBSingleton::instance().getDBObjectInstance()->getOptimizerDataSource();
-    ThreadPool<Optimizer> optimizerPool(optimizerPoolSize);
-    
     while (!boost::this_thread::interruption_requested()) {
         try {
+            boost::this_thread::sleep(optimizerInterval);
             if (beat->isLeadNode()) {
+                FTS3_COMMON_LOGGER_NEWLOG(INFO) << "leadNode" << commit;
                 std::list<Pair> pairs = dataSource->getActivePairs();
                 int initial_size = pairs.size();
                 // Make sure the order is always the same
                 // See FTS-1094
                 pairs.sort();
+                auto start = std::chrono::system_clock::now();
                 for (auto i = pairs.begin(); i != pairs.end(); ++i) {
-                    Optimizer *optimizer = new Optimizer(dataSource, &optimizerCallbacks, *i, inMemoryStore);
+                    OptimizerDataSource *ds = db::DBSingleton::instance().getDBObjectInstance()->getOptimizerDataSource();
+
+                    Optimizer *optimizer = new Optimizer(ds, &optimizerCallbacks, *i, {});
                     optimizer->setSteadyInterval(optimizerSteadyInterval);
                     optimizer->setMaxNumberOfStreams(maxNumberOfStreams);
                     optimizer->setMaxSuccessRate(maxSuccessRate);
@@ -126,12 +131,17 @@ void OptimizerService::runService()
                     optimizer->setBaseSuccessRate(baseSuccessRate);
                     optimizer->setEmaAlpha(emaAlpha);
                     optimizer->setStepSize(increaseStep, increaseAggressiveStep, decreaseStep);
+                    FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Submitting Optimizer to thread pool: Pair - " << *i << commit;
                     optimizerPool.start(optimizer);
+                    FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Optimizer submitted: Pair - " << *i << commit;
                 }
-
                 optimizerPool.join();
                 int numPairs = optimizerPool.reduce(std::plus<int>());
-                FTS3_COMMON_LOGGER_NEWLOG(INFO) <<"Optimizerpool processed: " << initial_size
+                auto end = std::chrono::system_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                FTS3_COMMON_LOGGER_NEWLOG(INFO) << "runOptimizerForPair duration: " <<  duration << commit;
+
+                FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Optimizerpool processed: " << initial_size
                 << " files (" << numPairs << " have been proceesed)" << commit;
 
             }
@@ -148,10 +158,7 @@ void OptimizerService::runService()
         catch (...) {
             FTS3_COMMON_LOGGER_NEWLOG(ERR) << "Process thread OptimizerService unknown" << fts3::common::commit;
         }
-            boost::this_thread::sleep(optimizerInterval);
         }
-        optimizerPool.interrupt();
-        return; 
 }
 
 

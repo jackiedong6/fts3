@@ -50,8 +50,11 @@ static void intializeDatabase(bool test = false)
     std::string dbPassword = ServerConfig::instance().get<std::string > ("DbPassword");
     std::string dbConnectString = ServerConfig::instance().get<std::string > ("DbConnectString");
     int pooledConn = ServerConfig::instance().get<int> ("DbThreadsNum");
-    if(test)
+    if(test) {
         pooledConn = 2;
+    }
+    FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Pooled Connections: " << pooledConn << commit;
+
 
     db::DBSingleton::instance().getDBObjectInstance()->init(dbUserName, dbPassword, dbConnectString, pooledConn);
 }
