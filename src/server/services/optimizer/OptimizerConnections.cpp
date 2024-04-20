@@ -30,7 +30,6 @@ using namespace fts3::common;
 namespace fts3 {
 namespace optimizer {
 
-
 // borrowed from http://oroboro.com/irregular-ema/
 static inline double exponentialMovingAverage(double sample, double alpha, double cur)
 {
@@ -152,6 +151,20 @@ static int optimizeGoodSuccessRate(const PairState &current, const PairState &pr
     return decision;
 }
 
+// There is information, but it is the first time seen since the restart. Returns true if the pair exists, returns false if pair does not exist.
+bool Optimizer::updateIfPairExist(const Pair& pair, PairState& current) {
+    boost::upgrade_lock<boost::shared_mutex> readLock(mx);
+    if (inMemoryStore.find(pair) == inMemoryStore.end()) {
+        boost::upgrade_to_unique_lock<boost::shared_mutex> writeLock(readLock);
+        if (inMemoryStore.find(pair) == inMemoryStore.end()) {
+            current.ema = current.throughput;
+            inMemoryStore[pair] = current;
+            return false; 
+        }
+    }
+    return true;
+}
+
 // This algorithm idea is similar to the TCP congestion window.
 // It gives priority to success rate. If it gets worse, it will back off reducing
 // the total number of connections between storages.
@@ -187,7 +200,7 @@ bool Optimizer::optimizeConnectionsForPair(OptimizerMode optMode, const Pair &pa
     current.successRate = dataSource->getSuccessRateForPair(pair, timeFrame, &current.retryCount);
     current.activeCount = dataSource->getActive(pair);
     current.queueSize = dataSource->getSubmitted(pair);
-
+    
     // There is no value yet. In this case, pick the high value if configured, mid-range otherwise.
     if (previousValue == 0) {
         if (range.specific) {
@@ -201,24 +214,24 @@ bool Optimizer::optimizeConnectionsForPair(OptimizerMode optMode, const Pair &pa
         setOptimizerDecision(pair, decision, current, decision, rationale.str(), timer.elapsed());
 
         current.ema = current.throughput;
+        boost::unique_lock<boost::shared_mutex> writeLock(mx);
         inMemoryStore[pair] = current;
-
         return true;
     }
 
-    // There is information, but it is the first time seen since the restart
-    if (inMemoryStore.find(pair) == inMemoryStore.end()) {
-        current.ema = current.throughput;
-        inMemoryStore[pair] = current;
-        FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Store first feedback from " << pair << commit;
+    if(!updateIfPairExist(pair, current)) {
         return false;
     }
-
-    const PairState previous = inMemoryStore[pair];
+    PairState previous;
+    {
+        // Acquire read lock within brackets to reduce lock scope.
+        boost::shared_lock<boost::shared_mutex> readLock(mx);
+        previous = inMemoryStore[pair];
+    }
 
     // Calculate new Exponential Moving Average
     current.ema = exponentialMovingAverage(current.throughput, emaAlpha, previous.ema);
-
+    
     // If we have no range, leave it here
     if (range.min == range.max) {
         setOptimizerDecision(pair, range.min, current, 0, "Range fixed", timer.elapsed());
@@ -334,9 +347,12 @@ void Optimizer::setOptimizerDecision(const Pair &pair, int decision, const PairS
         << " (" << elapsed.wall << "ns)" << commit;
     FTS3_COMMON_LOGGER_NEWLOG(INFO)
         << rationale << commit;
-
-    inMemoryStore[pair] = current;
-    inMemoryStore[pair].connections = decision;
+    {
+        // Acquire write lock within brackets to reduce scope.
+        boost::unique_lock<boost::shared_mutex> writeLock(mx);
+        inMemoryStore[pair] = current;
+        inMemoryStore[pair].connections = decision;
+    }
     dataSource->storeOptimizerDecision(pair, decision, current, diff, rationale);
 
     if (callbacks) {

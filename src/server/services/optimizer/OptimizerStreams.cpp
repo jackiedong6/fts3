@@ -33,6 +33,7 @@ namespace optimizer {
 // This part of the algorithm will check how to split the number of connections
 // between the number of available transfers.
 // Basically, divide the number of connections between the number of queued+active
+
 void Optimizer::optimizeStreamsForPair(OptimizerMode optMode, const Pair &pair)
 {
     // No optimization for streams, so go for 1
@@ -40,7 +41,7 @@ void Optimizer::optimizeStreamsForPair(OptimizerMode optMode, const Pair &pair)
         dataSource->storeOptimizerStreams(pair, 1);
         return;
     }
-
+    boost::shared_lock<boost::shared_mutex> lock(mx);
     auto state = inMemoryStore[pair];
 
     int connectionsAvailable = state.connections;

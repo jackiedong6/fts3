@@ -21,15 +21,18 @@
 #include "config/ServerConfig.h"
 #include "Optimizer.h"
 #include "OptimizerConstants.h"
+#include "OptimizerPair.h"
 #include "common/Exceptions.h"
 #include "common/Logger.h"
+#include "common/ThreadPool.h"
+#include <chrono> 
 
 using namespace fts3::common;
 using namespace fts3::config;
 
 namespace fts3 {
 namespace optimizer {
-
+boost::shared_mutex Optimizer::mx;
 
 Optimizer::Optimizer(OptimizerDataSource *ds, OptimizerCallbacks *callbacks):
     dataSource(ds), callbacks(callbacks),
@@ -75,6 +78,10 @@ void Optimizer::setBaseSuccessRate(int newValue)
     baseSuccessRate = newValue;
 }
 
+void Optimizer::setPoolSize(int poolSize)
+{
+    optimizerPoolSize = poolSize;
+}
 
 void Optimizer::setStepSize(int increase, int increaseAggressive, int decrease)
 {
@@ -89,19 +96,47 @@ void Optimizer::setEmaAlpha(double alpha)
     emaAlpha = alpha;
 }
 
+void Optimizer::setParallelizeOptimizer(bool parallelizationEnabled) {
+    parallelizeOptimizer = parallelizationEnabled;
+}
+
 
 void Optimizer::run(void)
 {
     FTS3_COMMON_LOGGER_NEWLOG(DEBUG) << "Optimizer run" << commit;
+
     try {
         std::list<Pair> pairs = dataSource->getActivePairs();
         // Make sure the order is always the same
         // See FTS-1094
         pairs.sort();
+        int initial_size = pairs.size();
+        auto start = std::chrono::system_clock::now();
 
-        for (auto i = pairs.begin(); i != pairs.end(); ++i) {
-            runOptimizerForPair(*i);
+        if (parallelizeOptimizer) {
+            ThreadPool<OptimizerPair> pool(optimizerPoolSize);
+            FTS3_COMMON_LOGGER_NEWLOG(INFO) << "Optimizer Pool Size: " <<  optimizerPoolSize << commit;
+
+            for (auto i = pairs.begin(); i != pairs.end(); ++i) {
+                pool.start(new OptimizerPair(*i, this));
+            }
+            // Wait for all threads to finish
+            pool.join();
+
+            int numPairs = pool.reduce(std::plus<int>());
+            FTS3_COMMON_LOGGER_NEWLOG(INFO) <<"Optimizerpool processed: " << initial_size
+            << " pairs (" << numPairs << " have been proceesed)" << commit;        
         }
+        else {
+            // Sequential execution of Optimizer
+            for (auto i = pairs.begin(); i != pairs.end(); ++i) {
+                runOptimizerForPair(*i);
+            }
+        }
+        auto end = std::chrono::system_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        FTS3_COMMON_LOGGER_NEWLOG(INFO) << "runOptimizerForPair duration: " <<  duration << commit;
+    
     }
     catch (std::exception &e) {
         throw SystemError(std::string(__func__) + ": Caught exception " + e.what());

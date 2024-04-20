@@ -98,19 +98,20 @@ static int getCountInState(soci::session &sql, const Pair &pair, const std::stri
 
 class MySqlOptimizerDataSource: public OptimizerDataSource {
 private:
-    soci::session sql;
+    // soci::session sql;
+    soci::connection_pool* connectionPool;
 
 public:
-    MySqlOptimizerDataSource(soci::connection_pool* connectionPool): sql(*connectionPool)
-    {
+    MySqlOptimizerDataSource(soci::connection_pool* pool) : connectionPool(pool) {}
+    soci::session getNewSession() {
+        return soci::session(*connectionPool);
     }
-
     ~MySqlOptimizerDataSource() {
     }
 
     std::list<Pair> getActivePairs(void) {
         std::list<Pair> result;
-
+        soci::session sql = getNewSession();
         soci::rowset<soci::row> rs = (sql.prepare <<
             "SELECT DISTINCT source_se, dest_se "
             "FROM t_file "
@@ -125,13 +126,15 @@ public:
 
         return result;
     }
-
+    
 
     OptimizerMode getOptimizerMode(const std::string &source, const std::string &dest) {
+        soci::session sql = getNewSession();
         return getOptimizerModeInner(sql, source, dest);
     }
 
     void getPairLimits(const Pair &pair, Range *range, StorageLimits *limits) {
+        soci::session sql = getNewSession();
         soci::indicator nullIndicator;
 
         limits->source = limits->destination = 0;
@@ -175,7 +178,7 @@ public:
     int getOptimizerValue(const Pair &pair) {
         soci::indicator isCurrentNull;
         int currentActive = 0;
-
+        soci::session sql = getNewSession();
         sql << "SELECT active FROM t_optimizer "
             "WHERE source_se = :source AND dest_se = :dest_se",
             soci::use(pair.source),soci::use(pair.destination),
@@ -196,7 +199,7 @@ public:
 
         time_t now = time(NULL);
         time_t windowStart = now - interval.total_seconds();
-
+        soci::session sql = getNewSession();
         soci::rowset<soci::row> transfers = (sql.prepare <<
         "SELECT start_time, finish_time, transferred, filesize "
         " FROM t_file "
@@ -271,7 +274,7 @@ public:
     time_t getAverageDuration(const Pair &pair, const boost::posix_time::time_duration &interval) {
         double avgDuration = 0.0;
         soci::indicator isNullAvg = soci::i_ok;
-
+        soci::session sql = getNewSession();
         sql << "SELECT AVG(tx_duration) FROM t_file USE INDEX(idx_finish_time)"
             " WHERE source_se = :source AND dest_se = :dest AND file_state IN ('FINISHED', 'ARCHIVING') AND "
             "   tx_duration > 0 AND tx_duration IS NOT NULL AND "
@@ -284,6 +287,7 @@ public:
 
     double getSuccessRateForPair(const Pair &pair, const boost::posix_time::time_duration &interval,
         int *retryCount) {
+        soci::session sql = getNewSession();
         soci::rowset<soci::row> rs = (sql.prepare <<
             "SELECT file_state, retry, current_failures AS recoverable FROM t_file USE INDEX(idx_finish_time)"
             " WHERE "
@@ -332,17 +336,19 @@ public:
     }
 
     int getActive(const Pair &pair) {
+        soci::session sql = getNewSession();
         return getCountInState(sql, pair, "ACTIVE");
     }
 
     int getSubmitted(const Pair &pair) {
+        soci::session sql = getNewSession();
         return getCountInState(sql, pair, "SUBMITTED");
     }
 
     double getThroughputAsSource(const std::string &se) {
         double throughput = 0;
         soci::indicator isNull;
-
+        soci::session sql = getNewSession();
         sql <<
             "SELECT SUM(throughput) FROM t_file "
             "WHERE source_se= :name AND file_state='ACTIVE' AND throughput IS NOT NULL",
@@ -354,7 +360,7 @@ public:
     double getThroughputAsDestination(const std::string &se) {
         double throughput = 0;
         soci::indicator isNull;
-
+        soci::session sql = getNewSession();
         sql << "SELECT SUM(throughput) FROM t_file "
                "WHERE dest_se= :name AND file_state='ACTIVE' AND throughput IS NOT NULL",
             soci::use(se), soci::into(throughput, isNull);
@@ -364,12 +370,13 @@ public:
 
     void storeOptimizerDecision(const Pair &pair, int activeDecision,
         const PairState &newState, int diff, const std::string &rationale) {
-
+        soci::session sql = getNewSession();
         setNewOptimizerValue(sql, pair, activeDecision, newState.ema);
         updateOptimizerEvolution(sql, pair, activeDecision, diff, rationale, newState);
     }
 
     void storeOptimizerStreams(const Pair &pair, int streams) {
+        soci::session sql = getNewSession();
         sql.begin();
 
         sql << "UPDATE t_optimizer "
