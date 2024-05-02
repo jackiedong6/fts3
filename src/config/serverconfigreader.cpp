@@ -254,6 +254,16 @@ po::options_description ServerConfigReader::_defineConfigOptions()
         "Set the number of threads in the internal threadpool"
     )
     (
+        "OptimizerThreadPool",
+        po::value<std::string>( &(_vars["OptimizerThreadPool"]) )->default_value("5"),
+        "Set the number of threads in the optimizer threadpool"
+    )
+    (
+        "ParallelizeOptimizer",
+        po::value<std::string>( &(_vars["ParallelizeOptimizer"]) )->default_value("false"),
+        "Enable or disable the parallelization of the Optimizer decision making for each source-destination pair"
+    )
+    (
         "CleanBulkSize",
         po::value<std::string>( &(_vars["CleanBulkSize"]) )->default_value("5000"),
         "Set the bulk size, in number of jobs, used for cleaning the old records"

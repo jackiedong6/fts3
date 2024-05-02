@@ -97,6 +97,8 @@ void OptimizerService::runService()
     auto increaseStep = config::ServerConfig::instance().get<int>("OptimizerIncreaseStep");
     auto increaseAggressiveStep = config::ServerConfig::instance().get<int>("OptimizerAggressiveIncreaseStep");
     auto decreaseStep = config::ServerConfig::instance().get<int>("OptimizerDecreaseStep");
+    auto poolSize = config::ServerConfig::instance().get<int>("OptimizerThreadPool");
+    auto parallelizationEnabled = config::ServerConfig::instance().get<bool>("ParallelizeOptimizer");
 
     OptimizerNotifier optimizerCallbacks(
         config::ServerConfig::instance().get<bool>("MonitoringMessaging"),
@@ -114,6 +116,8 @@ void OptimizerService::runService()
     optimizer.setBaseSuccessRate(baseSuccessRate);
     optimizer.setEmaAlpha(emaAlpha);
     optimizer.setStepSize(increaseStep, increaseAggressiveStep, decreaseStep);
+    optimizer.setPoolSize(poolSize);
+    optimizer.setParallelizeOptimizer(parallelizationEnabled);
 
     while (!boost::this_thread::interruption_requested()) {
         try {
